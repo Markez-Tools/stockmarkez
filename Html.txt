@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StockMarkez</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Affichage de la date et de l'heure -->
+  <div class="datetime-display" id="datetime"></div>
+  
+  <!-- En-tête -->
+  <header>
+    StockMarkez
+    <button class="home-btn" onclick="showSection('accueil')">Accueil</button>
+  </header>
+  
+  <!-- Contenu principal -->
+  <main>
+    <!-- 1. Tableau de Bord (Accueil) -->
+    <div id="section-accueil" class="content-container">
+      <h2>Tableau de Bord</h2>
+      <div class="dashboard-indicators">
+        <div class="dashboard-card daily-profit">
+          <i class="fas fa-chart-line option-icon"></i>
+          <h3>Bénéfice du Jour</h3>
+          <p id="dailyProfit">0 Fcfa</p>
+        </div>
+        <div class="dashboard-card weekly-profit">
+          <i class="fas fa-calendar-week option-icon"></i>
+          <h3>Bénéfice de la Semaine</h3>
+          <p id="weeklyProfit">0 Fcfa</p>
+        </div>
+      </div>
+      <h3>Stock Principal</h3>
+      <table class="stock-table" id="stockPrincipalTable">
+        <thead>
+          <tr>
+            <th>Article</th>
+            <th>Stock</th>
+          </tr>
+        </thead>
+        <tbody id="dashboardStockBody"></tbody>
+      </table>
+      <h3>Stock par Point de Vente</h3>
+      <div id="dashboardPointStock"></div>
+      <div class="options-grid">
+        <div class="option-card achats" onclick="showSection('achat')">
+          <i class="fas fa-shopping-cart option-icon"></i>
+          <p>Achats</p>
+        </div>
+        <div class="option-card vendre" onclick="showSection('vente')">
+          <!-- Nouvel icône pour Vendre -->
+          <i class="fas fa-coins option-icon"></i>
+          <p>Vendre</p>
+        </div>
+        <div class="option-card statistiques" onclick="showSection('statistiques')">
+          <i class="fas fa-chart-bar option-icon"></i>
+          <p>Statistiques</p>
+        </div>
+        <div class="option-card articles" onclick="showSection('articles')">
+          <i class="fas fa-list option-icon"></i>
+          <p>Mes Articles</p>
+        </div>
+        <div class="option-card clientsfournisseurs" onclick="showSection('fournisseurs')">
+          <i class="fas fa-users option-icon"></i>
+          <p>Fournisseurs</p>
+        </div>
+        <div class="option-card configurations" onclick="showSection('config')">
+          <i class="fas fa-cogs option-icon"></i>
+          <p>Configurations</p>
+        </div>
+        <div class="option-card pointsdevente" onclick="showSection('pointsdevente')">
+          <i class="fas fa-store option-icon"></i>
+          <p>Points de Vente</p>
+        </div>
+        <div class="option-card reappro" onclick="showSection('reapprovisionnement')">
+          <i class="fas fa-truck option-icon"></i>
+          <p>Appro</p>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 2. Fournisseurs -->
+    <div id="section-fournisseurs" class="content-container">
+      <button class="back-btn" onclick="showSection('accueil')">Retour</button>
+      <h2>Fournisseurs</h2>
+      <div id="form-fournisseur">
+        <h3 id="fournisseur-form-title">Ajouter un Fournisseur</h3>
+        <div class="form-group">
+          <label>Nom du Fournisseur <span style="color:red;">*</span> :</label>
+          <input type="text" id="newSupplierName" required>
+        </div>
+        <div class="form-group">
+          <label>Adresse :</label>
+          <input type="text" id="newSupplierAddress">
+        </div>
+        <div class="form-group">
+          <label>Téléphone :</label>
+          <input type="text" id="newSupplierPhone">
+        </div>
+        <!-- Conteneur dédié aux articles associés -->
+        <div id="supplierArticles">
+          <h4>Articles Associés</h4>
+          <div id="articlesContainer"></div>
+          <button onclick="ajouterArticleFournisseur()">Ajouter un Article</button>
+        </div>
+        <button class="btn-validate" id="btn-save-supplier" onclick="enregistrerFournisseur()">Valider le Fournisseur</button>
+      </div>
+      <hr>
+      <table id="suppliersTable">
+        <thead>
+          <tr>
+            <th>Nom</th>
+            <th>Adresse</th>
+            <th>Téléphone</th>
+            <th>Articles</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="suppliersTableBody"></tbody>
+      </table>
+    </div>
+    
+    <!-- 3. Achats -->
+    <div id="section-achat" class="content-container">
+      <button class="back-btn" onclick="showSection('accueil')">Retour</button>
+      <h2>Nouvel Achat</h2>
+      <div class="form-group">
+        <label>Fournisseur :</label>
+        <select id="supplierSelect" required onchange="majArticleSelectForAchat(); clearLignesAchat();"></select>
+      </div>
+      <div id="achat-lines"></div>
+      <button onclick="ajouterLigneAchat()">Ajouter un article (max 10)</button>
+      <div class="form-group">
+        <label>Date :</label>
+        <input type="date" id="achatDate" required>
+      </div>
+      <div class="form-group">
+        <label>Total Achat : <span id="totalPurchaseDisplay">0 Fcfa</span></label>
+      </div>
+      <button class="btn-validate" onclick="validerAchat()">Valider l'achat</button>
+      <!-- Historique des Achats (100 dernières) -->
+      <h3>Historique des Achats (100 dernières)</h3>
+      <table class="sales-history-table" id="achatHistoryTable">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Heure</th>
+            <th>Fournisseur</th>
+            <th>Article</th>
+            <th>Prix d'achat</th>
+            <th>Quantité</th>
+            <th>Prix Total</th>
+          </tr>
+        </thead>
+        <tbody id="achatHistoryBody"></tbody>
+      </table>
+    </div>
+    
+    <!-- 4. Ventes -->
+    <div id="section-vente" class="content-container">
+      <button class="back-btn" onclick="showSection('accueil')">Retour</button>
+      <h2>Nouvelle Vente</h2>
+      <div class="form-group">
+        <label>Source du Stock :</label>
+        <select id="stockSource" onchange="majVenteOptions(); clearLignesVente();">
+          <option value="principal">Stock Principal</option>
+          <option value="pointdevente">Point de Vente</option>
+        </select>
+      </div>
+      <div class="form-group" id="vente-point-select" style="display:none;">
+        <label>Point de Vente :</label>
+        <select id="ventePointDeVenteSelect"></select>
+      </div>
+      <div id="vente-lines"></div>
+      <button onclick="ajouterLigneVente()">Ajouter un article (max 10)</button>
+      <div class="form-group">
+        <label>Nom du Client :</label>
+        <input type="text" id="clientName" required>
+      </div>
+      <div class="form-group">
+        <label>Date de Vente :</label>
+        <input type="date" id="venteDate" required>
+      </div>
+      <div class="form-group">
+        <label>Total Vente : <span id="totalSalePrice">0 Fcfa</span></label>
+      </div>
+      <button class="btn-validate" onclick="validerVente()">Valider la Vente</button>
+      <!-- Historique des Ventes (100 dernières) avec colonne Prix d'Achat -->
+      <h3>Historique des Ventes (100 dernières)</h3>
+      <table class="sales-history-table" id="salesHistoryTable">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Heure</th>
+            <th>Nom du Client</th>
+            <th>Article</th>
+            <th>Prix d'achat</th>
+            <th>Quantité</th>
+            <th>Prix Vendu</th>
+            <th>Stock Utilisé</th>
+          </tr>
+        </thead>
+        <tbody id="salesHistoryBody"></tbody>
+      </table>
+    </div>
+    
+    <!-- 5. Points de Vente -->
+    <div id="section-pointsdevente" class="content-container">
+      <button class="back-btn" onclick="showSection('accueil')">Retour</button>
+      <h2>Points de Vente</h2>
+      <!-- Formulaire d'ajout de Point de Vente -->
+      <div id="form-pointdevente">
+        <h3>Ajouter un Point de Vente</h3>
+        <div class="form-group">
+          <label>Nom du Point de Vente :</label>
+          <input type="text" id="newPointName" required>
+        </div>
+        <div class="form-group">
+          <label>Adresse :</label>
+          <input type="text" id="newPointAddress" required>
+        </div>
+        <div class="form-group">
+          <label>Téléphone :</label>
+          <input type="text" id="newPointPhone" required>
+        </div>
+        <button class="btn-validate" onclick="ajouterPointDeVente()">Valider le Point de Vente</button>
+      </div>
+      <!-- Tableau fusionné unique pour afficher les Points de Vente et le détail des stocks -->
+      <table class="stock-table" id="pointsVenteTable">
+        <thead>
+          <tr>
+            <th>Nom</th>
+            <th>Adresse</th>
+            <th>Téléphone</th>
+            <th>Détail du Stock</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="pointsVenteBody"></tbody>
+      </table>
+    </div>
+    
+    <!-- 6. Appro (Réapprovisionnement) -->
+    <div id="section-reapprovisionnement" class="content-container">
+      <button class="back-btn" onclick="showSection('accueil')">Retour</button>
+      <h2>Appro</h2>
+      <div class="tab-buttons">
+        <button id="tab-reapp" class="active-tab" onclick="switchRestockTab('reapp')">Du Stock Principal</button>
+        <button id="tab-transfert" onclick="switchRestockTab('transfert')">Transfert entre PDV</button>
+      </div>
+      <!-- Approvisionnement depuis Stock Principal -->
+      <div id="form-reapp" class="restock-form">
+        <h3>Du Stock Principal vers un Point de Vente</h3>
+        <div class="form-group">
+          <label>Opérateur :</label>
+          <input type="text" id="reappOperator" placeholder="Nom de l'opérateur" required>
+        </div>
+        <div class="form-group">
+          <label>Destination (Point de Vente) :</label>
+          <select id="reappDestination" required>
+            <option value="">Sélectionner un Point de Vente</option>
+          </select>
+        </div>
+        <div id="reapp-lines"></div>
+        <button onclick="addReappLine()">Ajouter un article (max 10)</button>
+        <div id="reapp-summary" class="restock-summary"></div>
+        <button class="btn-validate" onclick="validateReapp()">Valider l'opération</button>
+      </div>
+      <!-- Transfert Interne entre Points de Vente -->
+      <div id="form-transfert" class="restock-form" style="display:none;">
+        <h3>Transfert entre Points de Vente</h3>
+        <div class="form-group">
+          <label>Opérateur :</label>
+          <input type="text" id="transOperator" placeholder="Nom de l'opérateur" required>
+        </div>
+        <div class="form-group">
+          <label>Source (PDV) :</label>
+          <select id="transSource" required onchange="updateTransArticleOptions(); updateTransSummary();">
+            <option value="">Sélectionner le PDV Source</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Destination (PDV) :</label>
+          <select id="transDestination" required>
+            <option value="">Sélectionner le PDV Destination</option>
+          </select>
+        </div>
+        <div id="trans-lines"></div>
+        <button onclick="addTransLine()">Ajouter un article (max 10)</button>
+        <div id="trans-summary" class="restock-summary"></div>
+        <button class="btn-validate" onclick="validateTrans()">Valider l'opération</button>
+      </div>
+      <!-- Historique des Opérations Appro/Transferts (100 dernières) -->
+      <h3>Historique des Opérations (100 dernières)</h3>
+      <table class="sales-history-table" id="restockHistoryTable">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Heure</th>
+            <th>Opérateur</th>
+            <th>Article</th>
+            <th>Quantité</th>
+            <th>Source</th>
+            <th>Destination</th>
+          </tr>
+        </thead>
+        <tbody id="restockHistoryBody"></tbody>
+      </table>
+      <div id="lowStockAlert" class="low-stock-alert"></div>
+    </div>
+    
+    <!-- 7. Mes Articles -->
+    <div id="section-articles" class="content-container">
+      <button class="back-btn" onclick="showSection('accueil')">Retour</button>
+      <h2>Mes Articles</h2>
+      <table class="articles-table" id="articlesTable">
+        <thead>
+          <tr>
+            <th>Nom</th>
+            <th>Stock Principal</th>
+            <th>Stock Total</th>
+            <th>Prix d'achat</th>
+            <th>Prix de vente</th>
+            <th>Bénéfice Unitaire</th>
+            <th>Bénéfice Potentiel Total</th>
+          </tr>
+        </thead>
+        <tbody id="articlesTableBody"></tbody>
+      </table>
+      <div id="articlesTotalBenefit" style="font-size:1.2em; font-weight:bold; text-align:right; margin-top:10px;"></div>
+      <h3>Stock par Point de Vente (Détail)</h3>
+      <div id="articlesPointsContainer"></div>
+    </div>
+    
+    <!-- 8. Statistiques -->
+    <div id="section-statistiques" class="content-container">
+      <button class="back-btn" onclick="showSection('accueil')">Retour</button>
+      <h2>Statistiques</h2>
+      <div class="stats-container">
+        <div class="stat-block ventes">
+          <h4>Top 3 des Articles</h4>
+          <div id="topArticlesStats">Aucun résultat</div>
+        </div>
+        <div class="stat-block ventes">
+          <h4>Mes Ventes</h4>
+          <div id="salesStats">
+            <div>Vente du Jour : <span id="salesDay">0</span></div>
+            <div>Vente de la Semaine : <span id="salesWeek">0</span></div>
+            <div>Vente du Mois : <span id="salesMonth">0</span></div>
+          </div>
+        </div>
+        <div class="stat-block benefices">
+          <h4>Mes Bénéfices</h4>
+          <div id="benefitsStats">
+            <div>Bénéfice du Jour : <span id="benefitDay">0 Fcfa</span></div>
+            <div>Bénéfice de la Semaine : <span id="benefitWeek">0 Fcfa</span></div>
+            <div>Bénéfice du Mois : <span id="benefitMonth">0 Fcfa</span></div>
+          </div>
+        </div>
+        <div class="stat-block depenses">
+          <h4>Mes Dépenses</h4>
+          <div id="expensesStats">
+            <div>Dépense du Jour : <span id="expenseDay">0 Fcfa</span></div>
+            <div>Dépense de la Semaine : <span id="expenseWeek">0 Fcfa</span></div>
+            <div>Dépense du Mois : <span id="expenseMonth">0 Fcfa</span></div>
+          </div>
+        </div>
+        <div class="stat-block stock">
+          <h4>Valeur et Coût des Stocks</h4>
+          <div id="stockValueCost">
+            <div>Valeur du Stock : <span id="stockValue">0 Fcfa</span></div>
+            <div>Coût du Stock : <span id="stockCost">0 Fcfa</span></div>
+          </div>
+        </div>
+        <div style="text-align:center;">
+          <button onclick="toggleRealTimeLog()">Voir le log en temps réel</button>
+        </div>
+      </div>
+      <div class="journal-export">
+        <h3>Journal</h3>
+        <div class="form-group">
+          <label for="journalPeriodSelect">Période :</label>
+          <select id="journalPeriodSelect">
+            <option value="all">Toutes</option>
+            <option value="day">Aujourd'hui</option>
+            <option value="week">Semaine</option>
+            <option value="month">Mois</option>
+            <option value="year">Année</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="journalExportSelect">Exportation du Journal :</label>
+          <select id="journalExportSelect">
+            <option value="pdf">PDF</option>
+            <option value="excel">Excel</option>
+            <option value="txt">Texte</option>
+          </select>
+        </div>
+        <button onclick="exportJournalUpdated()">Télécharger</button>
+      </div>
+    </div>
+    
+    <!-- 9. Configurations -->
+    <div id="section-config" class="content-container">
+      <button class="back-btn" onclick="showSection('accueil')">Retour</button>
+      <h2>Configurations</h2>
+      <div class="config-buttons">
+        <button class="reset" onclick="resetAppData()">Réinitialiser l'application</button>
+        <button class="export-import" onclick="exportAppData()">Exporter les données</button>
+        <div>
+          <input type="file" id="importFile" accept=".json">
+          <button class="export-import" onclick="importAppData()">Importer les données</button>
+        </div>
+        <hr>
+        <div class="options-grid">
+          <div class="option-card suppression" onclick="showSection('suppression')">
+            <i class="fas fa-trash-alt option-icon"></i>
+            <p>Suppression</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 10. Suppressions Manuelles -->
+    <div id="section-suppression" class="content-container">
+      <button class="back-btn" onclick="showSection('config')">Retour</button>
+      <div class="admin-section">
+        <div class="form-group">
+          <h3>Fournisseurs</h3>
+          <select id="deleteSupplierSelect"></select>
+          <button onclick="supprimerFournisseurFromSelect()">Supprimer</button>
+        </div>
+        <div class="form-group">
+          <h3>Points de Vente</h3>
+          <select id="deletePointSelect"></select>
+          <button onclick="supprimerPointDeVenteDirect(document.getElementById('deletePointSelect').value)">Supprimer</button>
+        </div>
+        <div class="form-group">
+          <h3>Articles</h3>
+          <select id="deleteArticleSelect"></select>
+          <button onclick="supprimerArticle()">Supprimer</button>
+        </div>
+        <div class="form-group">
+          <h3>Ventes</h3>
+          <select id="deleteSaleSelect"></select>
+          <button onclick="supprimerVente()">Supprimer</button>
+        </div>
+      </div>
+    </div>
+  </main>
+  
+  <!-- Modal Log en temps réel -->
+  <div id="realTimeLogModal" class="modal-log">
+    <button class="close-log" onclick="toggleRealTimeLog()">Fermer</button>
+    <h3>Log en temps réel</h3>
+    <pre id="realTimeLogContent"></pre>
+  </div>
+  
+  <!-- Notification -->
+  <div id="notification" class="notification"></div>
+  
+  <script src="script.js"></script>
+</body>
+</html>

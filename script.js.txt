@@ -1,0 +1,1380 @@
+/* ========== Variables Globales et Utilitaires ========== */
+function formatMoney(value) {
+  return Number(value).toLocaleString('fr-FR') + " Fcfa";
+}
+
+let fournisseurs = JSON.parse(localStorage.getItem('fournisseurs')) || [];
+let stockPrincipal = JSON.parse(localStorage.getItem('stockPrincipal')) || [];
+let achats = JSON.parse(localStorage.getItem('achats')) || [];
+let ventes = JSON.parse(localStorage.getItem('ventes')) || [];
+let pointsDeVente = JSON.parse(localStorage.getItem('pointsDeVente')) || [];
+let stockPointsDeVente = JSON.parse(localStorage.getItem('stockPointsDeVente')) || {};
+let restocks = JSON.parse(localStorage.getItem('restocks')) || [];
+let currentDateTimeInterval;
+
+/* Mise à jour automatique de l'historique des appros toutes les 5 secondes */
+setInterval(updateRestockHistory, 5000);
+
+/* Notification */
+function showNotification(message, type) {
+  const notification = document.getElementById('notification');
+  notification.textContent = message;
+  notification.className = 'notification ' + (type === 'error' ? 'error' : 'success') + ' fade-in';
+  setTimeout(() => {
+    notification.classList.remove('fade-in');
+    notification.classList.add('fade-out');
+  }, 3000);
+  setTimeout(() => { notification.className = 'notification'; }, 3500);
+}
+
+/* Mise à jour de la date et de l'heure */
+function updateDateTime() {
+  const now = new Date();
+  const optionsDate = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+  const optionsTime = { hour: 'numeric', minute: 'numeric', second: 'numeric' };
+  document.getElementById('datetime').textContent =
+    now.toLocaleDateString('fr-FR', optionsDate) + " - " + now.toLocaleTimeString('fr-FR', optionsTime);
+}
+
+/* Navigation entre les sections */
+function showSection(s) {
+  document.querySelectorAll('.content-container').forEach(e => {
+    e.style.display = 'none';
+    e.classList.remove('show');
+  });
+  const section = document.getElementById('section-' + s);
+  section.style.display = 'block';
+  setTimeout(() => { section.classList.add('show'); }, 50);
+  window.scrollTo(0, 0);
+  
+  if (s === 'accueil') { updateDashboard(); }
+  if (s === 'fournisseurs') { clearFournisseurForm(); majFournisseursDisplay(); }
+  if (s === 'achat') { majSupplierSelect(); majArticleSelectForAchat(); clearLignesAchat(); }
+  if (s === 'vente') { majVenteOptions(); clearLignesVente(); updateSalesHistory(); }
+  if (s === 'pointsdevente') { refreshPointsVenteDisplay(); }
+  if (s === 'reapprovisionnement') { populateRestockDropdowns(); }
+  if (s === 'articles') { majArticlesDisplay(); updateArticlesPoints(); }
+  if (s === 'statistiques') { afficherStatistiques(); updateExpensesStats(); }
+  if (s === 'suppression') { updateDeletionDropdowns(); }
+}
+
+/* Chargement initial */
+window.onload = function() {
+  updateDateTime();
+  currentDateTimeInterval = setInterval(updateDateTime, 1000);
+  showSection('accueil');
+  init();
+  runTests();
+};
+
+/* Initialisation */
+function init() {
+  try {
+    fournisseurs = JSON.parse(localStorage.getItem('fournisseurs')) || [];
+    stockPrincipal = JSON.parse(localStorage.getItem('stockPrincipal')) || [];
+    achats = JSON.parse(localStorage.getItem('achats')) || [];
+    ventes = JSON.parse(localStorage.getItem('ventes')) || [];
+    pointsDeVente = JSON.parse(localStorage.getItem('pointsDeVente')) || [];
+    stockPointsDeVente = JSON.parse(localStorage.getItem('stockPointsDeVente')) || {};
+    restocks = JSON.parse(localStorage.getItem('restocks')) || [];
+  } catch (error) {
+    console.error("Erreur lors du chargement des données :", error);
+    showNotification("Erreur lors du chargement des données.", "error");
+  }
+  majSupplierSelect();
+  majPointsDeVenteSelect();
+  majFournisseursDisplay();
+  majArticlesDisplay();
+  updateDashboard();
+  majVenteOptions();
+  afficherStatistiques();
+  updateSalesHistory();
+  updateAchatHistory();
+  updateDeletionDropdowns();
+}
+
+/* Tableau de bord et bénéfices */
+function updateDashboard() {
+  majArticlesDisplay();
+  const dashboardBody = document.getElementById('dashboardStockBody');
+  dashboardBody.innerHTML = "";
+  stockPrincipal.forEach(a => {
+    const row = document.createElement('tr');
+    row.classList.add("dashboard-sp-row");
+    row.innerHTML = `<td>${a.nom}</td><td>${a.stock}</td>`;
+    dashboardBody.appendChild(row);
+  });
+  updateDashboardPointsStock();
+  
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  const firstDayOfWeek = new Date(today);
+  firstDayOfWeek.setDate(today.getDate() - today.getDay());
+  
+  const profitDay = ventes.filter(v => new Date(v.date).toISOString().split('T')[0] === todayStr)
+    .reduce((acc, v) => acc + v.quantite * (v.prixUnitaire - getCost(v.article)), 0);
+  const profitWeek = ventes.filter(v => new Date(v.date) >= firstDayOfWeek)
+    .reduce((acc, v) => acc + v.quantite * (v.prixUnitaire - getCost(v.article)), 0);
+  
+  document.getElementById('dailyProfit').textContent = formatMoney(profitDay);
+  document.getElementById('weeklyProfit').textContent = formatMoney(profitWeek);
+}
+
+/* Mise à jour du bloc Stock PDV dans le Dashboard */
+function updateDashboardPointsStock() {
+  const container = document.getElementById('dashboardPointStock');
+  if (container) {
+    let html = "";
+    pointsDeVente.forEach(p => {
+      let stockList = "Aucun stock";
+      const stockArray = stockPointsDeVente[p.nom];
+      if (stockArray && stockArray.length > 0) {
+        stockList = stockArray.map(a => `${a.nom}: ${a.stock}`).join(", ");
+      }
+      html += `<div><strong>${p.nom}</strong> - Stock: ${stockList}</div>`;
+    });
+    container.innerHTML = html;
+  }
+}
+
+/* Historique des Achats (100 dernières) */
+function updateAchatHistory() {
+  const tbody = document.getElementById('achatHistoryBody');
+  tbody.innerHTML = "";
+  const historique = achats.slice(-100).reverse();
+  historique.forEach(a => {
+    const achatDate = new Date(a.date);
+    const datePart = achatDate.toLocaleDateString('fr-FR');
+    const timePart = achatDate.toLocaleTimeString('fr-FR');
+    const total = a.quantite * a.prixUnitaire;
+    const row = document.createElement('tr');
+    row.innerHTML = `<td>${datePart}</td>
+                     <td>${timePart}</td>
+                     <td>${a.fournisseur}</td>
+                     <td>${a.article}</td>
+                     <td>${formatMoney(a.prixUnitaire)}</td>
+                     <td>${a.quantite}</td>
+                     <td>${formatMoney(total)}</td>`;
+    tbody.appendChild(row);
+  });
+}
+
+/* ---------------- Section Fournisseurs ---------------- */
+/* Code stable : aucune modification apportée */
+function clearFournisseurForm() {
+  document.getElementById('newSupplierName').value = "";
+  document.getElementById('newSupplierAddress').value = "";
+  document.getElementById('newSupplierPhone').value = "";
+  document.getElementById('articlesContainer').innerHTML = "";
+  document.getElementById('fournisseur-form-title').textContent = "Ajouter un Fournisseur";
+  document.getElementById('btn-save-supplier').removeAttribute("data-edit-id");
+}
+function ajouterArticleFournisseur() {
+  const container = document.getElementById('articlesContainer');
+  const newArticle = document.createElement('div');
+  newArticle.className = 'article-input';
+  newArticle.innerHTML = `
+    <input type="text" placeholder="Nom de l'article" required>
+    <input type="number" placeholder="Prix d'achat" step="0.01" required>
+    <button onclick="this.parentNode.remove()">X</button>
+  `;
+  container.appendChild(newArticle);
+}
+function enregistrerFournisseur() {
+  const nom = document.getElementById('newSupplierName').value.trim();
+  if (!nom) { showNotification("Le nom du fournisseur est obligatoire.", "error"); return; }
+  const adresse = document.getElementById('newSupplierAddress').value.trim();
+  const telephone = document.getElementById('newSupplierPhone').value.trim();
+  const articles = [];
+  let valid = true;
+  document.querySelectorAll('#articlesContainer .article-input').forEach(div => {
+    const articleNom = div.querySelector('input[type="text"]').value.trim();
+    const prix = parseFloat(div.querySelector('input[type="number"]').value);
+    if (!articleNom || isNaN(prix) || prix <= 0) { valid = false; }
+    else { articles.push({ nom: articleNom, prix: prix }); }
+  });
+  if (!valid) { showNotification("Chaque article doit avoir un nom et un prix d'achat valide.", "error"); return; }
+  
+  const btn = document.getElementById('btn-save-supplier');
+  if (btn.getAttribute("data-edit-id")) {
+    const id = parseInt(btn.getAttribute("data-edit-id"));
+    const supplier = fournisseurs.find(f => f.id === id);
+    if (supplier) {
+      supplier.nom = nom;
+      supplier.adresse = adresse;
+      supplier.telephone = telephone;
+      supplier.articles = articles;
+      showNotification("Fournisseur modifié avec succès.", "success");
+    }
+    btn.removeAttribute("data-edit-id");
+  } else {
+    fournisseurs.push({ nom: nom, adresse: adresse, telephone: telephone, articles: articles, id: Date.now() });
+    showNotification("Fournisseur ajouté avec succès.", "success");
+  }
+  localStorage.setItem('fournisseurs', JSON.stringify(fournisseurs));
+  majSupplierSelect();
+  clearFournisseurForm();
+  majFournisseursDisplay();
+  showSection('fournisseurs');
+}
+function majFournisseursDisplay() {
+  const tbody = document.getElementById('suppliersTableBody');
+  tbody.innerHTML = "";
+  fournisseurs.forEach(f => {
+    let articlesHtml = "";
+    f.articles.forEach(a => { articlesHtml += `<div>${a.nom} (Prix : ${formatMoney(a.prix)})</div>`; });
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${f.nom}</td>
+      <td>${f.adresse || '-'}</td>
+      <td>${f.telephone || '-'}</td>
+      <td>${articlesHtml}</td>
+      <td>
+        <button onclick="preparerModificationFournisseur(${f.id})">Modifier</button>
+        <button onclick="if(confirm('Confirmer la suppression ?')) { supprimerFournisseur(${f.id}); }">Supprimer</button>
+      </td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+function preparerModificationFournisseur(id) {
+  const supplier = fournisseurs.find(f => f.id === id);
+  if (!supplier) return;
+  document.getElementById('newSupplierName').value = supplier.nom;
+  document.getElementById('newSupplierAddress').value = supplier.adresse || "";
+  document.getElementById('newSupplierPhone').value = supplier.telephone || "";
+  let articlesHtml = "";
+  supplier.articles.forEach(a => {
+    articlesHtml += `
+      <div class="article-input">
+        <input type="text" value="${a.nom}" required>
+        <input type="number" value="${a.prix}" step="0.01" required>
+        <button onclick="this.parentNode.remove()">X</button>
+      </div>
+    `;
+  });
+  document.getElementById('articlesContainer').innerHTML = articlesHtml;
+  const btn = document.getElementById('btn-save-supplier');
+  btn.setAttribute("data-edit-id", id);
+  document.getElementById('fournisseur-form-title').textContent = "Modifier le Fournisseur";
+}
+function supprimerFournisseur(id) {
+  if (!id) return;
+  fournisseurs = fournisseurs.filter(f => f.id !== id);
+  stockPrincipal = stockPrincipal.filter(a => a.fournisseurId !== id);
+  Object.keys(stockPointsDeVente).forEach(point => {
+    stockPointsDeVente[point] = stockPointsDeVente[point].filter(a => a.fournisseurId !== id);
+  });
+  localStorage.setItem('fournisseurs', JSON.stringify(fournisseurs));
+  localStorage.setItem('stockPrincipal', JSON.stringify(stockPrincipal));
+  init();
+  showNotification("Fournisseur supprimé.", "success");
+}
+function supprimerFournisseurFromSelect() {
+  const nom = document.getElementById('deleteSupplierSelect').value;
+  if (!nom) return;
+  const supplier = fournisseurs.find(f => f.nom === nom);
+  if (supplier) { supprimerFournisseur(supplier.id); }
+}
+function majSupplierSelect() {
+  const supplierSelect = document.getElementById('supplierSelect');
+  if (supplierSelect) {
+    supplierSelect.innerHTML = '<option value="">Sélectionner</option>';
+    fournisseurs.forEach(f => { supplierSelect.add(new Option(f.nom, f.nom)); });
+  }
+}
+function majArticleSelectForAchat() {
+  const supplierName = document.getElementById('supplierSelect').value;
+  const supplier = fournisseurs.find(f => f.nom === supplierName);
+  document.querySelectorAll('.achat-line .achat-article').forEach(select => {
+    select.innerHTML = '<option value="">Sélectionner un article</option>';
+    if (supplier) { supplier.articles.forEach(a => { select.add(new Option(a.nom, a.nom)); }); }
+  });
+}
+
+/* ---------------- Section Achats ---------------- */
+function clearLignesAchat() {
+  document.getElementById('achat-lines').innerHTML = "";
+  document.getElementById('totalPurchaseDisplay').textContent = "0 Fcfa";
+}
+function ajouterLigneAchat() {
+  const container = document.getElementById('achat-lines');
+  if (container.children.length >= 10) { showNotification("Maximum 10 articles par opération.", "error"); return; }
+  const row = document.createElement('div');
+  row.className = 'achat-line';
+  row.innerHTML = `
+    <div class="form-group">
+      <label>Article :</label>
+      <select class="achat-article" required onchange="majPrixAchatLigne(this)">
+        <option value="">Sélectionner un article</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Quantité :</label>
+      <input type="number" class="achat-quantity" value="1" min="1" required onchange="calculerTotalAchat()">
+    </div>
+    <div class="form-group">
+      <label>Prix unitaire : <span class="achat-price">0 Fcfa</span></label>
+    </div>
+    <div class="form-group">
+      <label>Total : <span class="achat-line-total">0 Fcfa</span></label>
+    </div>
+    <button onclick="this.parentNode.remove(); calculerTotalAchat();">Supprimer</button>
+    <hr>
+  `;
+  const supplierName = document.getElementById('supplierSelect').value;
+  const supplier = fournisseurs.find(f => f.nom === supplierName);
+  if (supplier) {
+    const select = row.querySelector('.achat-article');
+    supplier.articles.forEach(a => { select.add(new Option(a.nom, a.nom)); });
+  }
+  container.appendChild(row);
+  calculerTotalAchat();
+}
+function majPrixAchatLigne(selectElem) {
+  const supplierName = document.getElementById('supplierSelect').value;
+  const supplier = fournisseurs.find(f => f.nom === supplierName);
+  const row = selectElem.parentNode.parentNode;
+  const priceDisplay = row.querySelector('.achat-price');
+  if (supplier) {
+    const article = supplier.articles.find(a => a.nom === selectElem.value);
+    priceDisplay.textContent = article ? article.prix.toFixed(2) + " Fcfa" : "0 Fcfa";
+  } else {
+    priceDisplay.textContent = "0 Fcfa";
+  }
+  calculerTotalAchat();
+}
+function calculerTotalAchat() {
+  const lines = document.querySelectorAll('.achat-line');
+  let total = 0;
+  lines.forEach(line => {
+    const quantity = parseInt(line.querySelector('.achat-quantity').value) || 0;
+    const priceText = line.querySelector('.achat-price').textContent.replace(' Fcfa','');
+    const price = parseFloat(priceText) || 0;
+    const lineTotal = quantity * price;
+    line.querySelector('.achat-line-total').textContent = formatMoney(lineTotal);
+    total += lineTotal;
+  });
+  document.getElementById('totalPurchaseDisplay').textContent = formatMoney(total);
+}
+function validerAchat() {
+  const supplierName = document.getElementById('supplierSelect').value;
+  if (!supplierName) { showNotification("Veuillez sélectionner un fournisseur.", "error"); return; }
+  const achatDate = document.getElementById('achatDate').value;
+  if (!achatDate) { showNotification("La date est obligatoire.", "error"); return; }
+  const lines = document.querySelectorAll('.achat-line');
+  if (lines.length === 0) { showNotification("Veuillez ajouter au moins un article.", "error"); return; }
+  
+  // Utiliser l'heure actuelle pour l'achat
+  const currentTime = new Date().toTimeString().split(" ")[0];
+  const fullAchatDate = new Date(achatDate + "T" + currentTime);
+  
+  try {
+    lines.forEach(line => {
+      const articleName = line.querySelector('.achat-article').value;
+      const quantity = parseInt(line.querySelector('.achat-quantity').value);
+      const priceText = line.querySelector('.achat-price').textContent.replace(' Fcfa','');
+      const prixUnitaire = parseFloat(priceText);
+      if (!articleName || isNaN(quantity) || quantity < 1 || isNaN(prixUnitaire)) {
+        throw "Erreur de validation dans une ligne d'achat.";
+      }
+      const supplier = fournisseurs.find(f => f.nom === supplierName);
+      let articleStock = stockPrincipal.find(a => a.nom === articleName);
+      if (!articleStock) {
+        stockPrincipal.push({
+          nom: articleName,
+          stock: quantity,
+          fournisseur: supplierName,
+          fournisseurId: supplier.id,
+          prix: prixUnitaire,
+          prixVente: 0
+        });
+      } else {
+        articleStock.stock += quantity;
+        articleStock.prix = prixUnitaire;
+      }
+      achats.push({ fournisseur: supplierName, article: articleName, quantite: quantity, prixUnitaire: prixUnitaire, date: fullAchatDate.toISOString() });
+    });
+  } catch(e) {
+    showNotification(e, "error");
+    return;
+  }
+  localStorage.setItem('stockPrincipal', JSON.stringify(stockPrincipal));
+  localStorage.setItem('achats', JSON.stringify(achats));
+  showNotification("Achat enregistré !", "success");
+  clearLignesAchat();
+  document.getElementById('achatDate').value = "";
+  updateDashboard();
+  afficherStatistiques();
+  updateAchatHistory();
+}
+
+/* ---------------- Section Ventes ---------------- */
+function majVenteOptions() {
+  const stockSource = document.getElementById('stockSource').value;
+  const ventePointSelectDiv = document.getElementById('vente-point-select');
+  if (stockSource === 'principal') {
+    ventePointSelectDiv.style.display = 'none';
+  } else {
+    ventePointSelectDiv.style.display = 'block';
+    majVentePointDeVenteSelect();
+  }
+  document.querySelectorAll('.vente-line').forEach(line => { majVenteArticlesForNewLine(line); });
+}
+function majVentePointDeVenteSelect() {
+  const select = document.getElementById('ventePointDeVenteSelect');
+  if (select) {
+    select.innerHTML = '<option value="">Sélectionner un point de vente</option>';
+    if(pointsDeVente.length > 0){
+      pointsDeVente.forEach(pdv => { select.add(new Option(pdv.nom, pdv.nom)); });
+    } else {
+      select.innerHTML = '<option value="">Aucun point de vente disponible</option>';
+    }
+  }
+}
+function clearLignesVente() {
+  document.getElementById('vente-lines').innerHTML = "";
+  document.getElementById('totalSalePrice').textContent = "0 Fcfa";
+}
+function ajouterLigneVente() {
+  const container = document.getElementById('vente-lines');
+  if (container.children.length >= 10) { showNotification("Maximum 10 articles par vente.", "error"); return; }
+  const row = document.createElement('div');
+  row.className = 'vente-line';
+  row.innerHTML = `
+    <div class="form-group">
+      <label>Article :</label>
+      <select class="vente-article" required onchange="majPrixVenteLigne(this)">
+        <option value="">Sélectionner un article</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Quantité :</label>
+      <input type="number" class="vente-quantity" value="1" min="1" required onchange="calculerTotalVente()">
+    </div>
+    <div class="form-group">
+      <label>Prix de vente (Prix Vendu) :</label>
+      <input type="number" class="vente-price" step="0.01" required onchange="calculerTotalVente()">
+    </div>
+    <div class="form-group">
+      <label>Total :</label>
+      <span class="vente-line-total">0 Fcfa</span>
+    </div>
+    <button onclick="this.parentNode.remove(); calculerTotalVente();">Supprimer</button>
+    <hr>
+  `;
+  majVenteArticlesForNewLine(row);
+  container.appendChild(row);
+  calculerTotalVente();
+}
+function majVenteArticlesForNewLine(row) {
+  const stockSource = document.getElementById('stockSource').value;
+  const select = row.querySelector('.vente-article');
+  select.innerHTML = '<option value="">Sélectionner un article</option>';
+  let availableStock = [];
+  if (stockSource === 'principal') {
+    availableStock = stockPrincipal.filter(a => a.stock > 0);
+  } else if (stockSource === 'pointdevente') {
+    const ventePoint = document.getElementById('ventePointDeVenteSelect').value;
+    if (ventePoint && stockPointsDeVente[ventePoint]) {
+      availableStock = stockPointsDeVente[ventePoint].filter(a => a.stock > 0);
+    }
+  }
+  availableStock.forEach(a => { select.add(new Option(a.nom, a.nom)); });
+}
+function majPrixVenteLigne(selectElem) {
+  calculerTotalVente();
+}
+function calculerTotalVente() {
+  const lines = document.querySelectorAll('.vente-line');
+  let total = 0;
+  lines.forEach(line => {
+    const quantity = parseInt(line.querySelector('.vente-quantity').value) || 0;
+    const price = parseFloat(line.querySelector('.vente-price').value) || 0;
+    const lineTotal = quantity * price;
+    line.querySelector('.vente-line-total').textContent = formatMoney(lineTotal);
+    total += lineTotal;
+  });
+  document.getElementById('totalSalePrice').textContent = formatMoney(total);
+}
+function validerVente() {
+  const stockSource = document.getElementById('stockSource').value;
+  let ventePoint = null;
+  if (stockSource === 'pointdevente') {
+    ventePoint = document.getElementById('ventePointDeVenteSelect').value;
+    if (!ventePoint) { showNotification("Veuillez sélectionner un point de vente.", "error"); return; }
+  }
+  const clientName = document.getElementById('clientName').value.trim();
+  if (!clientName) { showNotification("Le nom du client est requis.", "error"); return; }
+  const saleDateInput = document.getElementById('venteDate').value;
+  if (!saleDateInput) { showNotification("La date de vente est requise.", "error"); return; }
+  
+  const now = new Date();
+  const fullSaleDate = new Date(saleDateInput + "T" + now.toTimeString().split(" ")[0]).toISOString();
+  
+  try {
+    document.querySelectorAll('.vente-line').forEach(line => {
+      const articleName = line.querySelector('.vente-article').value;
+      const quantity = parseInt(line.querySelector('.vente-quantity').value);
+      const price = parseFloat(line.querySelector('.vente-price').value);
+      if (!articleName || isNaN(quantity) || quantity < 1 || isNaN(price)) {
+        throw "Tous les champs doivent être validés dans chaque ligne de vente.";
+      }
+      const cost = getCost(articleName);
+      if (price <= cost) {
+        throw "Le prix de vente pour l'article " + articleName + " doit être supérieur au coût (" + formatMoney(cost) + ").";
+      }
+      let articleStock;
+      if (stockSource === 'principal') {
+        articleStock = stockPrincipal.find(a => a.nom === articleName);
+        if (!articleStock || articleStock.stock < quantity) {
+          throw "Stock principal insuffisant pour l'article " + articleName;
+        }
+        articleStock.stock -= quantity;
+      } else if (stockSource === 'pointdevente') {
+        if (!stockPointsDeVente[ventePoint]) {
+          throw "Le point de vente sélectionné n'a pas de stock.";
+        }
+        articleStock = stockPointsDeVente[ventePoint].find(a => a.nom === articleName);
+        if (!articleStock || articleStock.stock < quantity) {
+          throw "Stock insuffisant pour l'article " + articleName + " dans le point de vente " + ventePoint;
+        }
+        articleStock.stock -= quantity;
+      }
+      ventes.push({
+        article: articleName,
+        quantite: quantity,
+        prixUnitaire: price,
+        date: fullSaleDate,
+        source: stockSource,
+        pointDeVente: ventePoint,
+        client: clientName
+      });
+    });
+  } catch(e) {
+    showNotification(e, "error");
+    return;
+  }
+  localStorage.setItem('stockPrincipal', JSON.stringify(stockPrincipal));
+  localStorage.setItem('stockPointsDeVente', JSON.stringify(stockPointsDeVente));
+  localStorage.setItem('ventes', JSON.stringify(ventes));
+  showNotification("Vente enregistrée !", "success");
+  clearLignesVente();
+  document.getElementById('clientName').value = "";
+  document.getElementById('venteDate').value = "";
+  updateSalesHistory();
+  updateDashboard();
+  afficherStatistiques();
+}
+function updateSalesHistory() {
+  const tbody = document.getElementById('salesHistoryBody');
+  tbody.innerHTML = "";
+  ventes.slice(-100).reverse().forEach(v => {
+    const saleDate = new Date(v.date);
+    const datePart = saleDate.toLocaleDateString('fr-FR');
+    const timePart = saleDate.toLocaleTimeString('fr-FR');
+    const prixAchat = getCost(v.article);
+    const row = document.createElement('tr');
+    row.innerHTML = `<td>${datePart}</td>
+                     <td>${timePart}</td>
+                     <td>${v.client || ""}</td>
+                     <td>${v.article}</td>
+                     <td>${formatMoney(prixAchat)}</td>
+                     <td>${v.quantite}</td>
+                     <td>${formatMoney(v.prixUnitaire)}</td>
+                     <td>${v.source === 'principal' ? "Stock Principal" : v.pointDeVente}</td>`;
+    tbody.appendChild(row);
+  });
+}
+
+/* ---------------- Section Appro (Réapprovisionnement) ---------------- */
+function populateRestockDropdowns() {
+  const reappDest = document.getElementById('reappDestination');
+  if (reappDest) {
+    reappDest.innerHTML = '<option value="">Sélectionner un Point de Vente</option>';
+    pointsDeVente.forEach(p => { reappDest.add(new Option(p.nom, p.nom)); });
+  }
+  const transSource = document.getElementById('transSource');
+  const transDest = document.getElementById('transDestination');
+  if (transSource) {
+    transSource.innerHTML = '<option value="">Sélectionner le PDV Source</option>';
+    pointsDeVente.forEach(p => { transSource.add(new Option(p.nom, p.nom)); });
+  }
+  if (transDest) {
+    transDest.innerHTML = '<option value="">Sélectionner le PDV Destination</option>';
+    pointsDeVente.forEach(p => { transDest.add(new Option(p.nom, p.nom)); });
+  }
+}
+function switchRestockTab(tab) {
+  if (tab === 'reapp') {
+    document.getElementById('form-reapp').style.display = 'block';
+    document.getElementById('form-transfert').style.display = 'none';
+    document.getElementById('tab-reapp').classList.add('active-tab');
+    document.getElementById('tab-transfert').classList.remove('active-tab');
+  } else if (tab === 'transfert') {
+    document.getElementById('form-transfert').style.display = 'block';
+    document.getElementById('form-reapp').style.display = 'none';
+    document.getElementById('tab-transfert').classList.add('active-tab');
+    document.getElementById('tab-reapp').classList.remove('active-tab');
+    updateTransArticleOptions();
+  }
+}
+/* Approvisionnement depuis Stock Principal */
+function populateReappArticleDropdown(dropdown) {
+  dropdown.innerHTML = '<option value="">Sélectionner un article</option>';
+  stockPrincipal.forEach(article => {
+    if (article.stock > 0) {
+      dropdown.add(new Option(article.nom + " (" + article.stock + " disponibles)", article.nom));
+    }
+  });
+}
+function addReappLine() {
+  const container = document.getElementById('reapp-lines');
+  if (container.children.length >= 10) {
+    showNotification("Maximum 10 articles pour cette opération.", "error");
+    return;
+  }
+  const line = document.createElement('div');
+  line.className = 'restock-line';
+  line.innerHTML = `
+    <div class="form-group">
+      <label>Article :</label>
+      <select class="reapp-article" required onchange="updateReappSummary()">
+        <option value="">Sélectionner un article</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Quantité :</label>
+      <input type="number" class="reapp-quantity" value="1" min="1" required oninput="validateReappQuantity(this)">
+    </div>
+    <button onclick="this.parentNode.remove(); updateReappSummary();">Supprimer</button>
+    <hr>
+  `;
+  container.appendChild(line);
+  const select = line.querySelector('.reapp-article');
+  populateReappArticleDropdown(select);
+  updateReappSummary();
+}
+function validateReappQuantity(inputElem) {
+  const quantity = parseInt(inputElem.value);
+  const line = inputElem.parentNode;
+  const select = line.querySelector('.reapp-article');
+  const article = select.value;
+  let available = 0;
+  if (article) {
+    const art = stockPrincipal.find(a => a.nom === article);
+    available = art ? art.stock : 0;
+  }
+  if (quantity > available) {
+    inputElem.classList.add('error-field');
+    showNotification(`Quantité (${quantity}) dépasse le stock disponible (${available}) pour ${article}.`, "error");
+  } else {
+    inputElem.classList.remove('error-field');
+  }
+  updateReappSummary();
+}
+function updateReappSummary() {
+  const container = document.getElementById('reapp-lines');
+  const lines = container.querySelectorAll('.restock-line');
+  let summary = "";
+  const destination = document.getElementById('reappDestination').value || "Destination non sélectionnée";
+  lines.forEach(line => {
+    const article = line.querySelector('.reapp-article').value;
+    const qty = line.querySelector('.reapp-quantity').value;
+    if (article && qty) {
+      summary += `Appro de ${qty} unité(s) de ${article} vers ${destination}<br>`;
+    }
+  });
+  document.getElementById('reapp-summary').innerHTML = summary;
+}
+function validateReapp() {
+  const operator = document.getElementById('reappOperator').value.trim();
+  const destination = document.getElementById('reappDestination').value;
+  if (!operator) {
+    showNotification("Veuillez saisir le nom de l'opérateur.", "error");
+    return;
+  }
+  if (!destination) {
+    showNotification("Veuillez sélectionner une destination.", "error");
+    return;
+  }
+  const container = document.getElementById('reapp-lines');
+  const lines = container.querySelectorAll('.restock-line');
+  if (lines.length === 0) {
+    showNotification("Veuillez ajouter au moins un article.", "error");
+    return;
+  }
+  for (let line of lines) {
+    const article = line.querySelector('.reapp-article').value;
+    const qty = parseInt(line.querySelector('.reapp-quantity').value);
+    if (!article || isNaN(qty) || qty < 1) {
+      showNotification("Veuillez compléter chaque ligne correctement.", "error");
+      return;
+    }
+    const art = stockPrincipal.find(a => a.nom === article);
+    if (!art || qty > art.stock) {
+      showNotification(`Stock insuffisant pour ${article}.`, "error");
+      return;
+    }
+  }
+  lines.forEach(line => {
+    const article = line.querySelector('.reapp-article').value;
+    const qty = parseInt(line.querySelector('.reapp-quantity').value);
+    const art = stockPrincipal.find(a => a.nom === article);
+    if (art) art.stock -= qty;
+    if (!stockPointsDeVente[destination]) {
+      stockPointsDeVente[destination] = [];
+    }
+    let destArt = stockPointsDeVente[destination].find(a => a.nom === article);
+    if (destArt) {
+      destArt.stock += qty;
+    } else {
+      stockPointsDeVente[destination].push({ nom: article, stock: qty });
+    }
+    restocks.unshift({
+      date: new Date().toISOString(),
+      operator: operator,
+      article: article,
+      quantite: qty,
+      source: "Stock Principal",
+      destination: destination,
+      type: "Appro"
+    });
+  });
+  localStorage.setItem('stockPrincipal', JSON.stringify(stockPrincipal));
+  localStorage.setItem('stockPointsDeVente', JSON.stringify(stockPointsDeVente));
+  localStorage.setItem('restocks', JSON.stringify(restocks));
+  container.innerHTML = "";
+  document.getElementById('reappOperator').value = "";
+  showNotification("Appro effectué avec succès.", "success");
+  updateDashboard();
+  refreshPointsVenteDisplay();
+  afficherStatistiques();
+  updateRestockHistory();
+  updateLowStockAlert();
+  document.getElementById('reapp-summary').innerHTML = "";
+}
+
+/* Transfert Interne */
+function populateTransArticleDropdown(dropdown, sourcePoint) {
+  dropdown.innerHTML = '<option value="">Sélectionner un article</option>';
+  if (sourcePoint && stockPointsDeVente[sourcePoint]) {
+    stockPointsDeVente[sourcePoint].forEach(article => {
+      if (article.stock > 0) {
+        dropdown.add(new Option(article.nom + " (" + article.stock + " disponibles)", article.nom));
+      }
+    });
+  }
+}
+function addTransLine() {
+  const container = document.getElementById('trans-lines');
+  if (container.children.length >= 10) {
+    showNotification("Maximum 10 articles pour cette opération.", "error");
+    return;
+  }
+  const line = document.createElement('div');
+  line.className = 'restock-line';
+  line.innerHTML = `
+    <div class="form-group">
+      <label>Article :</label>
+      <select class="trans-article" required onchange="updateTransSummary()">
+        <option value="">Sélectionner un article</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Quantité :</label>
+      <input type="number" class="trans-quantity" value="1" min="1" required oninput="validateTransQuantity(this)">
+    </div>
+    <button onclick="this.parentNode.remove(); updateTransSummary();">Supprimer</button>
+    <hr>
+  `;
+  container.appendChild(line);
+  const select = line.querySelector('.trans-article');
+  const sourcePoint = document.getElementById('transSource').value;
+  populateTransArticleDropdown(select, sourcePoint);
+  updateTransSummary();
+}
+function updateTransSummary() {
+  const container = document.getElementById('trans-lines');
+  const lines = container.querySelectorAll('.restock-line');
+  let summary = "";
+  const source = document.getElementById('transSource').value || "Source non sélectionnée";
+  const destination = document.getElementById('transDestination').value || "Destination non sélectionnée";
+  lines.forEach(line => {
+    const article = line.querySelector('.trans-article').value;
+    const qty = line.querySelector('.trans-quantity').value;
+    if (article && qty) {
+      summary += `Transfert de ${qty} unité(s) de ${article} de ${source} vers ${destination}<br>`;
+    }
+  });
+  document.getElementById('trans-summary').innerHTML = summary;
+}
+function validateTransQuantity(inputElem) {
+  const quantity = parseInt(inputElem.value);
+  const line = inputElem.parentNode;
+  const select = line.querySelector('.trans-article');
+  const article = select.value;
+  const sourcePoint = document.getElementById('transSource').value;
+  let available = 0;
+  if (sourcePoint && article && stockPointsDeVente[sourcePoint]) {
+    const art = stockPointsDeVente[sourcePoint].find(a => a.nom === article);
+    available = art ? art.stock : 0;
+  }
+  if (quantity > available) {
+    inputElem.classList.add('error-field');
+    showNotification(`Quantité (${quantity}) dépasse le stock disponible (${available}) pour ${article}.`, "error");
+  } else {
+    inputElem.classList.remove('error-field');
+  }
+  updateTransSummary();
+}
+function updateTransArticleOptions() {
+  const sourcePoint = document.getElementById('transSource').value;
+  const container = document.getElementById('trans-lines');
+  if (sourcePoint) {
+    const selects = container.querySelectorAll('.trans-article');
+    selects.forEach(select => {
+      populateTransArticleDropdown(select, sourcePoint);
+    });
+  }
+  updateTransSummary();
+}
+function validateTrans() {
+  const operator = document.getElementById('transOperator').value.trim();
+  const source = document.getElementById('transSource').value;
+  const destination = document.getElementById('transDestination').value;
+  if (!operator) {
+    showNotification("Veuillez saisir le nom de l'opérateur.", "error");
+    return;
+  }
+  if (!source || !destination) {
+    showNotification("Veuillez sélectionner la source et la destination.", "error");
+    return;
+  }
+  if (source === destination) {
+    showNotification("La source et la destination doivent être différentes.", "error");
+    return;
+  }
+  const container = document.getElementById('trans-lines');
+  const lines = container.querySelectorAll('.restock-line');
+  if (lines.length === 0) {
+    showNotification("Veuillez ajouter au moins un article.", "error");
+    return;
+  }
+  for (let line of lines) {
+    const article = line.querySelector('.trans-article').value;
+    const qty = parseInt(line.querySelector('.trans-quantity').value);
+    if (!article || isNaN(qty) || qty < 1) {
+      showNotification("Veuillez compléter chaque ligne correctement.", "error");
+      return;
+    }
+    if (source && stockPointsDeVente[source]) {
+      const art = stockPointsDeVente[source].find(a => a.nom === article);
+      if (!art || qty > art.stock) {
+        showNotification(`Stock insuffisant pour ${article} dans ${source}.`, "error");
+        return;
+      }
+    }
+  }
+  lines.forEach(line => {
+    const article = line.querySelector('.trans-article').value;
+    const qty = parseInt(line.querySelector('.trans-quantity').value);
+    const art = stockPointsDeVente[source].find(a => a.nom === article);
+    if (art) art.stock -= qty;
+    if (!stockPointsDeVente[destination]) {
+      stockPointsDeVente[destination] = [];
+    }
+    let destArt = stockPointsDeVente[destination].find(a => a.nom === article);
+    if (destArt) {
+      destArt.stock += qty;
+    } else {
+      stockPointsDeVente[destination].push({ nom: article, stock: qty });
+    }
+    restocks.unshift({
+      date: new Date().toISOString(),
+      operator: operator,
+      article: article,
+      quantite: qty,
+      source: source,
+      destination: destination,
+      type: "Transfert Interne"
+    });
+  });
+  localStorage.setItem('stockPointsDeVente', JSON.stringify(stockPointsDeVente));
+  localStorage.setItem('restocks', JSON.stringify(restocks));
+  container.innerHTML = "";
+  document.getElementById('transOperator').value = "";
+  showNotification("Transfert effectué avec succès.", "success");
+  updateDashboard();
+  afficherStatistiques();
+  updateRestockHistory();
+  updateLowStockAlert();
+  showSection('pointsdevente');
+}
+
+/* ---------------- Historique des Réapprovisionnements/Transferts ---------------- */
+function updateRestockHistory() {
+  const tbody = document.getElementById('restockHistoryBody');
+  tbody.innerHTML = "";
+  const historique = restocks.slice(0, 100);
+  historique.forEach(r => {
+    const saleDate = new Date(r.date);
+    const datePart = saleDate.toLocaleDateString('fr-FR');
+    const timePart = saleDate.toLocaleTimeString('fr-FR');
+    const row = document.createElement('tr');
+    row.innerHTML = `<td>${datePart}</td>
+                     <td>${timePart}</td>
+                     <td>${r.operator}</td>
+                     <td>${r.article}</td>
+                     <td>${r.quantite}</td>
+                     <td>${r.source}</td>
+                     <td>${r.destination}</td>`;
+    const diff = (new Date() - new Date(r.date)) / 60000;
+    if(diff < 5){
+      row.style.backgroundColor = "#FFFACD";
+    }
+    tbody.appendChild(row);
+  });
+}
+
+/* Alerte stock faible */
+function updateLowStockAlert() {
+  let alertText = "";
+  stockPrincipal.forEach(a => {
+    if(a.stock < 5) {
+      alertText += `Attention: ${a.nom} en stock principal est critique (${a.stock} unités)<br>`;
+    }
+  });
+  Object.keys(stockPointsDeVente).forEach(point => {
+    stockPointsDeVente[point].forEach(a => {
+      if(a.stock < 5) {
+        alertText += `Attention: ${a.nom} dans ${point} est critique (${a.stock} unités)<br>`;
+      }
+    });
+  });
+  document.getElementById('lowStockAlert').innerHTML = alertText;
+}
+
+/* ---------------- Section Points de Vente ---------------- */
+function majPointsDeVenteSelect() {
+  const select = document.getElementById('ventePointDeVenteSelect');
+  if (select) {
+    select.innerHTML = '<option value="">Sélectionner un point de vente</option>';
+    if(pointsDeVente.length > 0) {
+      pointsDeVente.forEach(pdv => { select.add(new Option(pdv.nom, pdv.nom)); });
+    } else {
+      select.innerHTML = '<option value="">Aucun point de vente disponible</option>';
+    }
+  }
+}
+/* Fonction dédiée pour rafraîchir et afficher le tableau fusionné des Points de Vente */
+function refreshPointsVenteDisplay() {
+  const tbody = document.getElementById('pointsVenteBody');
+  tbody.innerHTML = "";
+  pointsDeVente.forEach(p => {
+    const stockData = stockPointsDeVente[p.nom] || [];
+    let nestedTable = '<table class="points-table"><thead><tr><th>Article</th><th>Stock</th></tr></thead><tbody>';
+    if (stockData.length > 0) {
+      stockData.forEach(a => {
+        let color = (a.stock < 5) ? 'red' : (a.stock < 10 ? 'orange' : 'green');
+        nestedTable += `<tr style="background-color:${color}"><td>${a.nom}</td><td>${a.stock}</td></tr>`;
+      });
+    } else {
+      nestedTable += '<tr><td colspan="2">Aucun stock</td></tr>';
+    }
+    nestedTable += '</tbody></table>';
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${p.nom}</td>
+      <td>${p.adresse || '-'}</td>
+      <td>${p.telephone || '-'}</td>
+      <td>${nestedTable}</td>
+      <td>
+        <button onclick="modifierPointDeVente('${p.nom}')">Modifier</button>
+        <button onclick="supprimerPointDeVenteDirect('${p.nom}')">Supprimer</button>
+      </td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+function modifierPointDeVente(pointName) {
+  const point = pointsDeVente.find(p => p.nom === pointName);
+  if (!point) return;
+  const newNom = prompt("Modifier le nom du point de vente :", point.nom);
+  if (!newNom) return;
+  const newAdresse = prompt("Modifier l'adresse :", point.adresse);
+  if (!newAdresse) return;
+  const newTelephone = prompt("Modifier le numéro de téléphone :", point.telephone);
+  if (!newTelephone) return;
+  const oldNom = point.nom;
+  point.nom = newNom.trim();
+  point.adresse = newAdresse.trim();
+  point.telephone = newTelephone.trim();
+  if (oldNom !== point.nom && stockPointsDeVente[oldNom]) {
+    stockPointsDeVente[point.nom] = stockPointsDeVente[oldNom];
+    delete stockPointsDeVente[oldNom];
+  }
+  localStorage.setItem('pointsDeVente', JSON.stringify(pointsDeVente));
+  localStorage.setItem('stockPointsDeVente', JSON.stringify(stockPointsDeVente));
+  init();
+  showNotification("Point de vente modifié avec succès.", "success");
+}
+function supprimerPointDeVenteDirect(pointName) {
+  if (confirm("Voulez-vous vraiment supprimer le point de vente '" + pointName + "' ?")) {
+    pointsDeVente = pointsDeVente.filter(p => p.nom !== pointName);
+    delete stockPointsDeVente[pointName];
+    localStorage.setItem('pointsDeVente', JSON.stringify(pointsDeVente));
+    localStorage.setItem('stockPointsDeVente', JSON.stringify(stockPointsDeVente));
+    init();
+    showNotification("Point de vente supprimé.", "success");
+  }
+}
+function ajouterPointDeVente() {
+  const name = document.getElementById('newPointName').value.trim();
+  const address = document.getElementById('newPointAddress').value.trim();
+  const phone = document.getElementById('newPointPhone').value.trim();
+  if (!name || !address || !phone) {
+    showNotification("Tous les champs du point de vente sont obligatoires.", "error");
+    return;
+  }
+  pointsDeVente.push({ nom: name, adresse: address, telephone: phone });
+  localStorage.setItem('pointsDeVente', JSON.stringify(pointsDeVente));
+  showNotification("Point de vente ajouté.", "success");
+  document.getElementById('newPointName').value = "";
+  document.getElementById('newPointAddress').value = "";
+  document.getElementById('newPointPhone').value = "";
+  refreshPointsVenteDisplay();
+}
+
+/* ---------------- Section Mes Articles ---------------- */
+function majArticlesDisplay() {
+  const tbody = document.getElementById('articlesTableBody');
+  let totalBeneficeGlobal = 0;
+  if (tbody) {
+    tbody.innerHTML = '';
+    stockPrincipal.forEach(a => {
+      const prixAchat = a.prix || 0;
+      const prixVente = a.prixVente || 0;
+      let totalStock = a.stock;
+      let beneficeUnitaire = prixVente - prixAchat;
+      for (const point in stockPointsDeVente) {
+        const articleInPoint = stockPointsDeVente[point].find(item => item.nom === a.nom);
+        if (articleInPoint) { totalStock += articleInPoint.stock; }
+      }
+      let totalBeneficePotentiel = beneficeUnitaire * totalStock;
+      totalBeneficeGlobal += totalBeneficePotentiel;
+      tbody.innerHTML += `
+        <tr>
+          <td>${a.nom}</td>
+          <td>${a.stock}</td>
+          <td>${totalStock}</td>
+          <td>${formatMoney(prixAchat)}</td>
+          <td><input type="number" value="${prixVente}" onchange="updatePrixVente(this.value, '${a.nom}')"></td>
+          <td>${formatMoney(beneficeUnitaire)}</td>
+          <td>${formatMoney(totalBeneficePotentiel)}</td>
+        </tr>
+      `;
+    });
+  }
+  document.getElementById('articlesTotalBenefit').textContent =
+    "Total bénéfice de tous les articles : " + formatMoney(totalBeneficeGlobal);
+}
+function updatePrixVente(newPrice, articleNom) {
+  const article = stockPrincipal.find(a => a.nom === articleNom);
+  if (article) {
+    article.prixVente = parseFloat(newPrice);
+    localStorage.setItem('stockPrincipal', JSON.stringify(stockPrincipal));
+    majArticlesDisplay();
+  }
+}
+function updateArticlesPoints() {
+  const container = document.getElementById('articlesPointsContainer');
+  container.innerHTML = '';
+  for (const point in stockPointsDeVente) {
+    const table = document.createElement('table');
+    table.className = 'stock-table';
+    const thead = document.createElement('thead');
+    thead.innerHTML = `<tr><th colspan="2">Point de Vente : ${point}</th></tr>
+                       <tr><th>Article</th><th>Stock</th></tr>`;
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    stockPointsDeVente[point].forEach(a => {
+      let color = a.stock < 5 ? 'red' : a.stock < 10 ? 'orange' : 'green';
+      tbody.innerHTML += `<tr style="background-color:${color}"><td>${a.nom}</td><td>${a.stock}</td></tr>`;
+    });
+    table.appendChild(tbody);
+    container.appendChild(table);
+  }
+}
+
+/* ---------------- Section Statistiques & Journal ---------------- */
+function afficherStatistiques() {
+  const articleCount = {};
+  ventes.forEach(v => {
+    articleCount[v.article] = (articleCount[v.article] || 0) + v.quantite;
+  });
+  const topArticles = Object.entries(articleCount).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const topArticlesDiv = document.getElementById('topArticlesStats');
+  topArticlesDiv.innerHTML = topArticles.length > 0 ?
+    topArticles.map(item => `${item[0]} : ${item[1]} ventes`).join('<br>') : "Aucun résultat";
+  
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  const salesDay = ventes.filter(v => new Date(v.date).toISOString().split('T')[0] === todayStr).length;
+  const firstDayOfWeek = new Date(today);
+  firstDayOfWeek.setDate(today.getDate() - today.getDay());
+  const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  const salesWeek = ventes.filter(v => new Date(v.date) >= firstDayOfWeek).length;
+  const salesMonth = ventes.filter(v => new Date(v.date) >= firstDayOfMonth).length;
+  
+  document.getElementById('salesDay').textContent = salesDay;
+  document.getElementById('salesWeek').textContent = salesWeek;
+  document.getElementById('salesMonth').textContent = salesMonth;
+  
+  const benefitDay = ventes.filter(v => new Date(v.date).toISOString().split('T')[0] === todayStr)
+    .reduce((sum, v) => sum + v.quantite * (v.prixUnitaire - getCost(v.article)), 0);
+  const benefitWeek = ventes.filter(v => new Date(v.date) >= firstDayOfWeek)
+    .reduce((sum, v) => sum + v.quantite * (v.prixUnitaire - getCost(v.article)), 0);
+  const benefitMonth = ventes.filter(v => new Date(v.date) >= firstDayOfMonth)
+    .reduce((sum, v) => sum + v.quantite * (v.prixUnitaire - getCost(v.article)), 0);
+  
+  document.getElementById('benefitDay').textContent = formatMoney(benefitDay);
+  document.getElementById('benefitWeek').textContent = formatMoney(benefitWeek);
+  document.getElementById('benefitMonth').textContent = formatMoney(benefitMonth);
+  
+  const stockValue = stockPrincipal.reduce((sum, a) => sum + (a.stock * (a.prixVente || 0)), 0);
+  const stockCost = stockPrincipal.reduce((sum, a) => sum + (a.stock * a.prix), 0);
+  
+  document.getElementById('stockValue').textContent = formatMoney(stockValue);
+  document.getElementById('stockCost').textContent = formatMoney(stockCost);
+}
+function updateExpensesStats() {
+  const today = new Date().toISOString().split('T')[0];
+  const firstDayOfWeek = new Date();
+  firstDayOfWeek.setDate(new Date().getDate() - new Date().getDay());
+  const firstDayOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  
+  const expenseDay = achats.filter(a => a.date === today).reduce((sum, a) => sum + a.quantite * a.prixUnitaire, 0);
+  const expenseWeek = achats.filter(a => new Date(a.date) >= firstDayOfWeek).reduce((sum, a) => sum + a.quantite * a.prixUnitaire, 0);
+  const expenseMonth = achats.filter(a => new Date(a.date) >= firstDayOfMonth).reduce((sum, a) => sum + a.quantite * a.prixUnitaire, 0);
+  
+  document.getElementById('expenseDay').textContent = formatMoney(expenseDay);
+  document.getElementById('expenseWeek').textContent = formatMoney(expenseWeek);
+  document.getElementById('expenseMonth').textContent = formatMoney(expenseMonth);
+}
+function toggleRealTimeLog() {
+  const modal = document.getElementById('realTimeLogModal');
+  if (modal.style.display === 'block') {
+    modal.style.display = 'none';
+  } else {
+    modal.style.display = 'block';
+    document.getElementById('realTimeLogContent').textContent = generateRealTimeLog();
+  }
+}
+function generateRealTimeLog() {
+  let log = "=== Mes Ventes par Mois ===\n";
+  let ventesParMois = {};
+  ventes.forEach(v => {
+    let mois = new Date(v.date).toLocaleString('default', { month: 'long', year: 'numeric' });
+    ventesParMois[mois] = (ventesParMois[mois] || 0) + v.quantite;
+  });
+  for (let mois in ventesParMois) { log += `${mois} : ${ventesParMois[mois]} ventes\n`; }
+  log += "\n=== Mes Bénéfices par Mois ===\n";
+  let beneficesParMois = {};
+  ventes.forEach(v => {
+    let mois = new Date(v.date).toLocaleString('default', { month: 'long', year: 'numeric' });
+    const cost = getCost(v.article);
+    beneficesParMois[mois] = (beneficesParMois[mois] || 0) + v.quantite * (v.prixUnitaire - cost);
+  });
+  for (let mois in beneficesParMois) { log += `${mois} : ${formatMoney(beneficesParMois[mois])}\n`; }
+  log += "\n=== Valeur et Coût du Stock Disponible ===\n";
+  log += `Valeur du Stock : ${document.getElementById('stockValue').textContent}\n`;
+  log += `Coût du Stock : ${document.getElementById('stockCost').textContent}\n`;
+  log += "\n=== Tous les Achats effectués ===\n";
+  achats.sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(a => {
+    log += `${a.date} - ${a.article} - ${a.quantite} à ${formatMoney(a.prixUnitaire)}\n`;
+  });
+  log += "\n=== Historique des Réapprovisionnements ===\n";
+  restocks.sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(r => {
+    const saleDate = new Date(r.date);
+    const datePart = saleDate.toLocaleDateString('fr-FR');
+    const timePart = saleDate.toLocaleTimeString('fr-FR');
+    log += `${datePart} - ${timePart} - Opérateur: ${r.operator} - ${r.article} : ${r.quantite} de ${r.source} vers ${r.destination}\n`;
+  });
+  return log;
+}
+function exportJournalUpdated() {
+  let period = document.getElementById('journalPeriodSelect').value;
+  let exportOption = document.getElementById('journalExportSelect').value;
+  let journalData = "";
+  let filterFunc = (d) => true;
+  const now = new Date();
+  if (period === 'day') {
+    const today = now.toISOString().split('T')[0];
+    filterFunc = (d) => d === today;
+  } else if (period === 'week') {
+    const startOfWeek = new Date();
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    filterFunc = (d) => new Date(d) >= startOfWeek;
+  } else if (period === 'month') {
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    filterFunc = (d) => new Date(d) >= startOfMonth;
+  } else if (period === 'year') {
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    filterFunc = (d) => new Date(d) >= startOfYear;
+  }
+  
+  journalData += "=== Mes Ventes par Mois ===\n";
+  let ventesParMois = {};
+  ventes.filter(v => filterFunc(new Date(v.date).toISOString().split('T')[0])).forEach(v => {
+    let mois = new Date(v.date).toLocaleString('default', { month: 'long', year: 'numeric' });
+    ventesParMois[mois] = (ventesParMois[mois] || 0) + v.quantite;
+  });
+  for (let mois in ventesParMois) { journalData += `${mois} : ${ventesParMois[mois]} ventes\n`; }
+  
+  journalData += "\n=== Mes Bénéfices par Mois ===\n";
+  let beneficesParMois = {};
+  ventes.filter(v => filterFunc(new Date(v.date).toISOString().split('T')[0])).forEach(v => {
+    let mois = new Date(v.date).toLocaleString('default', { month: 'long', year: 'numeric' });
+    const cost = getCost(v.article);
+    beneficesParMois[mois] = (beneficesParMois[mois] || 0) + v.quantite * (v.prixUnitaire - cost);
+  });
+  for (let mois in beneficesParMois) { journalData += `${mois} : ${formatMoney(beneficesParMois[mois])}\n`; }
+  
+  journalData += "\n=== Valeur et Coût du Stock Disponible ===\n";
+  journalData += `Valeur du Stock : ${document.getElementById('stockValue').textContent}\n`;
+  journalData += `Coût du Stock : ${document.getElementById('stockCost').textContent}\n`;
+  
+  journalData += "\n=== Tous les Achats effectués ===\n";
+  achats.filter(a => filterFunc(a.date)).sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(a => {
+    journalData += `${a.date} - ${a.article} - ${a.quantite} à ${formatMoney(a.prixUnitaire)}\n`;
+  });
+  
+  journalData += "\n=== Historique des Réapprovisionnements ===\n";
+  restocks.filter(r => filterFunc(new Date(r.date).toISOString().split('T')[0])).sort((a, b) => new Date(b.date) - new Date(a.date)).forEach(r => {
+    const saleDate = new Date(r.date);
+    const datePart = saleDate.toLocaleDateString('fr-FR');
+    const timePart = saleDate.toLocaleTimeString('fr-FR');
+    journalData += `${datePart} - ${timePart} - Opérateur: ${r.operator} - ${r.article} : ${r.quantite} de ${r.source} vers ${r.destination}\n`;
+  });
+  
+  if (exportOption === 'pdf') {
+    const pdfWindow = window.open("", "Export Journal PDF", "height=600,width=800");
+    pdfWindow.document.write("<html><head><title>Journal</title></head><body>");
+    pdfWindow.document.write("<h2>Journal</h2>");
+    pdfWindow.document.write("<pre>" + journalData + "</pre>");
+    pdfWindow.document.write("</body></html>");
+    pdfWindow.document.close();
+    pdfWindow.focus();
+    pdfWindow.print();
+    pdfWindow.close();
+  } else if (exportOption === 'excel') {
+    const csvContent = "data:text/csv;charset=utf-8," + journalData.replace(/\n/g, "\r\n");
+    const encodedUri = encodeURI(csvContent);
+    const a = document.createElement("a");
+    a.setAttribute("href", encodedUri);
+    a.setAttribute("download", "journal.csv");
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } else if (exportOption === 'txt') {
+    const blob = new Blob([journalData], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = "journal.txt";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+  showNotification("Journal exporté !", "success");
+}
+
+/* ---------------- Divers ---------------- */
+function getCost(articleName) {
+  const article = stockPrincipal.find(a => a.nom === articleName);
+  return article ? article.prix : 0;
+}
+
+/* ---------------- Tests Unitaires ---------------- */
+function runTests() {
+  console.log("Exécution des tests unitaires...");
+  console.assert(formatMoney(1000).includes("Fcfa"), "Test formatMoney échoué");
+  const testSales = [ { date: "2025-04-10T10:00:00", quantite: 2, prixUnitaire: 50, article: "A" },
+                      { date: "2025-04-11T11:00:00", quantite: 3, prixUnitaire: 60, article: "B" } ];
+  ventes = [...testSales];
+  const recent = ventes.slice(-100).reverse();
+  console.assert(recent[0].date === "2025-04-11T11:00:00", "L'ordre d'affichage des ventes est incorrect.");
+  console.log("Tests terminés.");
+}
+
+/* ---------------- Export / Import ---------------- */
+function exportAppData() {
+  const data = {
+    fournisseurs: fournisseurs,
+    stockPrincipal: stockPrincipal,
+    achats: achats,
+    ventes: ventes,
+    pointsDeVente: pointsDeVente,
+    stockPointsDeVente: stockPointsDeVente,
+    restocks: restocks
+  };
+  const jsonData = JSON.stringify(data, null, 2);
+  const blob = new Blob([jsonData], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "stockmarkez_backup.json";
+  a.click();
+  URL.revokeObjectURL(url);
+  showNotification("Données exportées.", "success");
+}
+function importAppData() {
+  const fileInput = document.getElementById('importFile');
+  if (fileInput.files.length === 0) {
+    showNotification("Veuillez sélectionner un fichier à importer.", "error");
+    return;
+  }
+  const file = fileInput.files[0];
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = JSON.parse(e.target.result);
+      fournisseurs = data.fournisseurs || [];
+      stockPrincipal = data.stockPrincipal || [];
+      achats = data.achats || [];
+      ventes = data.ventes || [];
+      pointsDeVente = data.pointsDeVente || [];
+      stockPointsDeVente = data.stockPointsDeVente || {};
+      restocks = data.restocks || [];
+      localStorage.setItem('fournisseurs', JSON.stringify(fournisseurs));
+      localStorage.setItem('stockPrincipal', JSON.stringify(stockPrincipal));
+      localStorage.setItem('achats', JSON.stringify(achats));
+      localStorage.setItem('ventes', JSON.stringify(ventes));
+      localStorage.setItem('pointsDeVente', JSON.stringify(pointsDeVente));
+      localStorage.setItem('stockPointsDeVente', JSON.stringify(stockPointsDeVente));
+      localStorage.setItem('restocks', JSON.stringify(restocks));
+      init();
+      showNotification("Données importées.", "success");
+    } catch (error) {
+      showNotification("Erreur lors de l'importation des données.", "error");
+    }
+  };
+  reader.readAsText(file);
+}
+function resetAppData() {
+  if (confirm("Voulez-vous vraiment réinitialiser l'application ? Toutes les données seront perdues.")) {
+    localStorage.clear();
+    fournisseurs = [];
+    stockPrincipal = [];
+    achats = [];
+    ventes = [];
+    pointsDeVente = [];
+    stockPointsDeVente = {};
+    restocks = [];
+    init();
+    showNotification("Application réinitialisée.", "success");
+  }
+}
+function updateDeletionDropdowns() {
+  // Fonction de mise à jour des dropdowns pour suppression (non détaillée ici)
+}
